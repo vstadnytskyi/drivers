@@ -1,0 +1,2 @@
+Physical Name,Serial Number,Location,Motor,Controller,SoftLimitsL,SoftLimitsH,Gear Ratio,Counts Per Revolution,Backlash,Backoff,Last Known Position,Pitch,Pitch units,Last Client,Description
+test Motor,83000000,2-5,T,T,0,205824,67,512,3000,0,1000,1000,um,0,This is a Z806 debugging of the code
