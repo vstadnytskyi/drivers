@@ -323,7 +323,6 @@ class DI245(object):
         self.close_port()
 
 di245_driver = DI245()
-Driver = DI245
 if __name__ == "__main__":
     from tempfile import gettempdir
 

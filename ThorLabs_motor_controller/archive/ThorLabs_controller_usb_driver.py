@@ -20,9 +20,10 @@ import traceback
 
 class ThorLabs_T_Motor(object):
     def __init__(self):
-        self.motor = self.type = 'T'
+        self.motor = 'T'
+        self.controller = 'T'
 
-    def init(self,serial_number = '83836244'):
+    def init(self,serial_number = '83825160'):
         self.serial_number = serial_number
         self.dev = self.find(self.serial_number)
         self.configuration()
@@ -34,7 +35,7 @@ class ThorLabs_T_Motor(object):
         dev = None
         devices = list(usb.core.find(idVendor=0x0403, idProduct=0xFAF0, find_all = True))
         return devices
-    
+
     def find(self,serial_number):
         """returns dev object for a given serial_number"""
         import usb
@@ -204,7 +205,7 @@ class ThorLabs_T_Motor(object):
             c_distance = pack('i',new_pos)
             command = c_header + c_channel + c_distance
             #print('command sent %r' % command)
-            response = self.inquiry(command,20)
+            response = self.query(command,20)
             res_pos = unpack('i',response[8:12])
             res_enc = unpack('i',response[12:16])
             res_status_bits = response[16:20]
@@ -223,7 +224,7 @@ class ThorLabs_T_Motor(object):
         """FIXIT: add description"""
         command = pack('BBBBBB',0x11,0x04,0x01,0x00,0x21,0x01)
         #print('Get position command sent %r' % command)
-        response = self.inquiry(command,12)
+        response = self.query(command,12)
         res_header = response[0:6]
         res_chan_ident = response[6:8]
         res_encoder_counts = response[8:12]
@@ -254,7 +255,7 @@ class ThorLabs_T_Motor(object):
 
     def hex_to_chr(self, var):
         for i in var:
-            print i
+            print(i)
             string =+ chr(var)
         return string
     """Potentially useful commands. Haven;t been used or extensively tested"""
@@ -339,6 +340,8 @@ if __name__ == "__main__":
     print('motor.home()')
     print('motor.blink()')
     motor = ThorLabs_T_Motor();
-    motor.init(serial_number = '83836933')
+    motor1 = ThorLabs_T_Motor();
+    motor1.init(serial_number = '83825160')
+    motor.init(serial_number = '27254090')
     motor.blink()
     motor.read(100)

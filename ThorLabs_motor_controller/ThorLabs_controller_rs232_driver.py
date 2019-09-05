@@ -8,6 +8,9 @@ valentyn.stadnytskyi@nih.gov
 
 The communication protocols:
 https://www.thorlabs.com/Software/Motion%20Control/APT_Communications_Protocol.pdf issue 20
+
+
+
 """
 from time import sleep, time
 from numpy import zeros, ones, mean, std, sign
@@ -21,9 +24,35 @@ from logging import debug, info, warn, error
 class Motor(object):
     def __init__(self):
         self.baudrate = 115200
-        self.controller = 'T'
-        self.motor = 'T'
+        self.controller = ''
+        self.motor = ''
         self.last_communiction = {}
+        self.port = None
+
+
+    def init(self, serial_number = '', controller_type = None, motor_type = None):
+        if controller_type is None:
+            raise Exception('The controller type is not specified!')
+        else:
+            self.controller_type = controller_type
+        if motor_type is None:
+            raise Exception('The motor type is not specified!')
+        else:
+            self.motor_type = motor_type
+
+        if serial_number != "":
+            port_name = self.get_port(serial_number = serial_number)
+            ser = self.get_serial_object(port_name = port_name)
+            if ser is not None:
+                self.port = ser
+                self.port.timeout = 0.4
+                self.serial_number = serial_number
+            else:
+                self.port = None
+                print('No serial device with serial number {}'.format(serial_number))
+        else:
+            self.port = None
+            print('Serial Number has to be specified')
 
     def list_all(self):
         """
@@ -33,7 +62,7 @@ class Motor(object):
         lst = serial.tools.list_ports.comports()
         available_ports = []
         for item in lst:
-            debug(item.manufacturer)
+            debug('Manufacturer of this motor is {}'.format(item.manufacturer))
             if item.manufacturer == 'Thorlabs':
                 available_ports.append(item)
         return available_ports
@@ -70,77 +99,75 @@ class Motor(object):
         ser = Serial(port_name, baudrate=self.baudrate, bytesize = 8, parity='N', stopbits=1, timeout=1)
         return ser
 
-    def init(self, serial_number = ''):
-        if serial_number != "":
-            port_name = self.get_port(serial_number = serial_number)
-            ser = self.get_serial_object(port_name = port_name)
-            if ser is not None:
-                self.ser = ser
-            else:
-                print('No serial device with serial number {}'.format(serial_number))
-        else:
-            print('Serial Number has to be specified')
 
     def initialization(self):
         """initialization function"""
         #this will turn on message to be send upon completion of the move.
 
         #I ran this command and it turned off reply to identify
-        #self.ser.write(pack('BBBBBB',0x6C,0x04,0x00,0x00,0x80,0x01))
+        #self.port.write(pack('BBBBBB',0x6C,0x04,0x00,0x00,0x80,0x01))
 
         #suspend end of motion message
-        #self.ser.write(pack('BBBBBB',0x6B,0x04,0x00,0x00,0x21,0x01))
+        #self.port.write(pack('BBBBBB',0x6B,0x04,0x00,0x00,0x21,0x01))
         """MGMSG_HW_NO_FLASH_PROGRAMMING"""
-        #self.ser.write()
+        #self.port.write()
         pass
 
     def read(self, N = 0):
         if N ==0:
             result = None
         else:
-            result = self.ser.read(N)
+            result = self.port.read(N)
         return result
 
     def write(self,command):
         self.flush()
-        self.ser.write(command)
+        self.port.write(command)
 
-    def inquiry(self,command, length = None):
+    def query_line(self,command, length = None):
         """write read command"""
+        self.flush()
         self.write(command)
-        result = self.ser.readline()
+        while self.port.in_waiting < 1:
+            sleep(0.1)
+        result = self.port.readline()
         return result
-    self.query = self.inquiry
 
-    def inquiry_old(self,command, length = None):
+    def query(self,command, length = None):
         """write read command"""
+        self.flush()
         self.write(command + '\r')
         if length == None:
             result = None
         else:
-            while self.ser.in_waiting < length:
+            while self.port.in_waiting < length:
                 sleep(0.1)
             result = self.read(N = length)
         return result
 
     def close(self):
-        self.ser.close()
-        del self.ser
+        self.port.close()
+        del self.port
 
     def waiting(self):
-        return [self.ser.in_waiting,self.ser.out_waiting]
+        return [self.port.in_waiting,self.port.out_waiting]
 
     def flush(self):
-        self.ser.reset_input_buffer()
-        self.ser.reset_output_buffer()
+        self.port.reset_input_buffer()
+        self.port.reset_output_buffer()
 
     def blink(self):
-        if self.controller == 'T':
+        """
+        submits blink command to the controller
+
+        tested for
+        """
+        if self.controller_type == 'T':
             self.write(pack('B'*6,0x23,0x02,0x00,0x00,0x50,0x01))
             flag = True
         else:
             flag = False
-
+            warn('the controller type is not specified')
 
     def identify(self):
         """
@@ -157,69 +184,117 @@ class Motor(object):
         84-85 bytes - <--HW Version-->
         86-87 bytes - <--Mod State-->
         88-89 bytes - <--nchs--> "mnumber of channels"
+
+        tested fot TDC001 cubes
         """
-        command = pack('BBBBBB',0x05,0x00,0x00,0x00,0x50,0x01)
-        result = self.inquiry(command,90)
-        self.full_result = result
-        Header = result[0:6]
-        SerialNumber = unpack('i',result[6:10]) #unpack('L',result[6:10])
-        ModelNumber = result[10:18]
-        Type = unpack('h',result[18:20])
-        FirmwareVersion = self.my_unpack(result,20,23)
-        HWVersion = result[84:86]
-        ForInternalUseOnly = result[24:84]
-        ModState = self.my_unpack(result,86,87)
-        nchs = self.my_unpack(result,88,89)
-        msg = ""
-        debug('The result of identify command: \n Header: %r \n Serial Number: %r \n Model Number: %r \n Type: %r \n Firmware Version: %r \n Mod State: %r \n nchs: %r \n For Internal Use Only: \n %r' % (Header, SerialNumber,ModelNumber,Type,FirmwareVersion, ModState,nchs,ForInternalUseOnly))
-        res_dic = {}
-        res_dic['Header'] = Header
-        res_dic['SerialNumber'] = SerialNumber
-        res_dic['ModelNumber'] = ModelNumber
-        res_dic['Type'] = Type
-        res_dic['FirmwareVersion'] = FirmwareVersion
-        res_dic['HWVersion'] = HWVersion
-        res_dic['ForInternalUseOnly'] = ForInternalUseOnly
-        res_dic['ModState'] = ModState
-        res_dic['nchs'] = nchs
+        from struct import pack
+        flag = True
+        if self.controller_type == 'T':
+            command = pack('BBBBBB',0x05,0x00,0x00,0x00,0x50,0x01)
+        else:
+            flag = False
+
+        if flag:
+            result = self.query_line(command,90)
+            self.full_result = result
+            Header = result[0:6]
+            SerialNumber = unpack('i',result[6:10]) #unpack('L',result[6:10])
+            ModelNumber = result[10:18]
+            Type = unpack('h',result[18:20])
+            FirmwareVersion = self.my_unpack(result,20,23)
+            HWVersion = result[84:86]
+            ForInternalUseOnly = result[24:84]
+            ModState = self.my_unpack(result,86,87)
+            nchs = self.my_unpack(result,88,89)
+            msg = ""
+            debug('The result of identify command: \n Header: {} \n Serial Number: {} \
+                \n Model Number: {} \n Type: {} \n Firmware Version: {} \n Mod State: {} \
+                \n nchs: {} \n For Internal Use Only: \
+                \n {}'.format(Header, SerialNumber,ModelNumber,Type,FirmwareVersion, ModState,nchs,ForInternalUseOnly))
+            res_dic = {}
+            res_dic['Header'] = Header
+            res_dic['SerialNumber'] = SerialNumber
+            res_dic['ModelNumber'] = ModelNumber
+            res_dic['Type'] = Type
+            res_dic['FirmwareVersion'] = FirmwareVersion
+            res_dic['HWVersion'] = HWVersion
+            res_dic['ForInternalUseOnly'] = ForInternalUseOnly
+            res_dic['ModState'] = ModState
+            res_dic['nchs'] = nchs
+        else:
+            res_dic = {}
+            res_dic['Header'] = None
+            res_dic['SerialNumber'] = None
+            res_dic['ModelNumber'] = None
+            res_dic['Type'] = None
+            res_dic['FirmwareVersion'] = None
+            res_dic['HWVersion'] = None
+            res_dic['ForInternalUseOnly'] = None
+            res_dic['ModState'] = None
+            res_dic['nchs'] = None
         return res_dic
 
 
     def move_abs(self,new_pos):
         flag = False
         comment = None
-        if self.controller == 'T' and self.motor == 'T':
+        if self.controller_type == 'T':
             c_header = pack('BBBBBB',0x53,0x04,0x06,0x00,0x80,0x01)
             c_channel = pack('BB',0x01,0x00)
             c_distance = pack('i',new_pos)
             command = c_header + c_channel + c_distance
-            #print('command sent %r' % command)
-            response = self.inquiry(command,20)
+            response = self.query_line(command,20)
             res_pos = unpack('i',response[8:12])
             res_enc = unpack('i',response[12:16])
             res_status_bits = response[16:20]
-            #talk to Fridriech about this issue with bits
-            #print('position %r , encoder %r, status bits %r' % (res_pos,res_enc,res_status_bits))
-            #if res_status_bits == pack('BBBB',0x00,0x04,0x00,0x90):
-            #    flag = True
-            #3if res_status_bits == pack('BBBB',0x01,0x04,0x00,0x90):
-            #    comment = 'Hard Limit Low'
-            #if res_status_bits == pack('BBBB',0x6F,0x76,0x45,0x72):
-            #    comment = 'Over'
             flag = True
         return flag, comment
 
+    def move_relative(self,delta_pos):
+        """
+        move relative
+        +delta_pos will move positive by that number
+        -delta_pos will move negative by that number
+
+        tested for TDC001 cube.
+        """
+        flag = False
+        comment = None
+        if self.controller_type == 'T':
+            c_header = pack('B'*6,0x48, 0x04, 0x06, 0x00, 0xA2, 0x01)
+            c_channel = pack('BB',0x01,0x00)
+            c_distance = pack('i',delta_pos)
+            command = c_header + c_channel + c_distance
+            #print('command sent %r' % command)
+            response = self.query_line(command,20)
+            res_pos = unpack('i',response[8:12])
+            res_enc = unpack('i',response[12:16])
+            res_status_bits = response[16:20]
+            debug('res_pos:{} , res_enc:{}, res_status_bits:{}'.format(res_pos,res_enc,res_status_bits))
+            flag = True
+            comment = '' + str(response)
+        else:
+            warn('unknown controller type')
+        reply = {}
+        reply['flag'] = flag
+        reply['comment'] = comment
+        return reply
+
+
     def get_position(self):
         """FIXIT: add description"""
-        command = pack('BBBBBB',0x11,0x04,0x01,0x00,0x21,0x01)
-        #print('Get position command sent %r' % command)
-        response = self.inquiry(command,12)
-        res_header = response[0:6]
-        res_chan_ident = response[6:8]
-        res_encoder_counts = response[8:12]
-        self.last_communiction['command'] = command
-        self.last_communiction['response'] = response
-        return unpack('i',res_encoder_counts)[0]
+        if self.controller == 'T':
+            command = pack('BBBBBB',0x11,0x04,0x01,0x00,0x21,0x01)
+            #print('Get position command sent %r' % command)
+            response = self.query(command,12)
+            res_header = response[0:6]
+            res_chan_ident = response[6:8]
+            res_encoder_counts = response[8:12]
+            self.last_communiction['command'] = command
+            self.last_communiction['response'] = response
+            return unpack('i',res_encoder_counts)[0]
+        else:
+            return None
 
     def set_position(self,value):
         """
@@ -236,7 +311,7 @@ class Motor(object):
         flag = False
         if self.motor == 'T':
             self.write(pack('B'*6,0x43,0x04,0x00,0x00,0xA2,0x01))
-            while self.ser.in_waiting == 0:
+            while self.port.in_waiting == 0:
                 sleep(0.1)
             res = self.read(6)
         if res == pack('BBBBBB',0x44,0x04,0x01,0x00,0x01,0x80):
@@ -251,7 +326,7 @@ class Motor(object):
 
     def hex_to_chr(self, var):
         for i in var:
-            print i
+            print(i)
             string =+ chr(var)
         return string
     """Potentially useful commands. Haven;t been used or extensively tested"""
@@ -264,7 +339,7 @@ class Motor(object):
         Pos = self.get_position()
         c_distance = pack('i',value)
         command = c_header + c_channel + c_distance
-        response = self.inquiry(command)
+        response = self.query(command)
         return response
 
 
@@ -284,13 +359,13 @@ class Motor(object):
             c_home_velocity = pack('l',home_velocity)
             c_offset_distance = pack('l',offset_distance)
             command = c_header + c_channel + c_home_dir + c_limit_switch + c_home_velocity + c_offset_distance
-            response = self.inquiry(command)
+            response = self.query(command)
 
     def home_parameters_get(self):
         """        MGMSG_MOT_GET_HOMEPARAMS 0x0442        """
         from struct import unpack
         command = pack('B'*6,0x41,0x04,0x01,0x00,0x64,0x73)
-        response = self.inquiry(command,20)
+        response = self.query(command,20)
         res = {}
         res['header'] = response[0:7]
         res['chan_ident'] = unpack('h',response[6:8])
@@ -325,12 +400,26 @@ class Motor(object):
 
 
 if __name__ == "__main__":
-
+    from tempfile import gettempdir
+    import logging
+    logging.basicConfig(#filename=gettempdir()+'/syringe_pump_DL.log',
+                        level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
     print('This is a Low Level python script providing Device Level with basic communication commands')
-    print('cube = Cube("COM6"); cube.motor = "T"; cube.controller = "T"')
-    print('cube.initialization()')
-    print('cube.moveAbs(0)')
-    print('cube.get_position()')
-    print('cube.set_position()')
-    print('cube.home()')
-    print('cube.blink()')
+
+    motors = []
+    motors.append(Motor())
+    #motors.append(Motor())
+    #motors.append(Motor())
+    #motors[0].init('27254090')
+    #motors[1].init('27254025')
+    motors[0].init('83825160', controller_type = 'T', motor_type = 'T')
+
+    for motor in motors:
+        motor.blink()
+
+    for motor in motors:
+        reply = motor.identify()
+        print(reply)
+
+    #for motor in motors: motor.close()
+    #print('all ports are closed')
